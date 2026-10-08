@@ -40,6 +40,9 @@ let problem = ''
 const carrying = new Map<string, string[]>()
 /** `NAME@host` pairs the person allowed for the rest of this session. */
 const allowed = new Set<string>()
+/** What a paste brought for an open field, by request id: never drawn, never in $.state. */
+const held = new Map<string, string>()
+const PASTE_MAX = 8192
 
 const vaultFile = () => `${vaultDir}/vault.json`
 
@@ -278,6 +281,37 @@ async function carry($: EngineInterface) {
   await $.env.set('CLAUDE_VAULT_ENV', names.size > 0 ? script : undefined)
 }
 
+async function readClipboard($: EngineInterface): Promise<string | undefined> {
+  const readers: ReadonlyArray<readonly string[]> =
+    os === 'macos'
+      ? [['pbpaste']]
+      : os === 'windows'
+        ? [['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', 'Get-Clipboard -Raw']]
+        : [['wl-paste', '--no-newline'], ['xclip', '-selection', 'clipboard', '-o'], ['xsel', '--clipboard', '--output']]
+  for (const argv of readers) {
+    const read = await run($, argv, { timeoutMs: 5_000 })
+    if (read?.exitCode === 0) return read.stdout
+  }
+  return undefined
+}
+
+/** Reads the clipboard into the open field: the value stays here, only its length goes to the drawing. */
+async function pasteInto($: EngineInterface, request: VaultRequest) {
+  const text = await readClipboard($)
+  if (text === undefined) return fail($, request, 'Could not read the clipboard. Type it instead.')
+  const value = text.trim()
+  if (value === '') return fail($, request, 'The clipboard is empty. Copy the value first.')
+  if (/[\r\n]/.test(value)) return fail($, request, 'The clipboard holds several lines. Copy just the value.')
+  if (value.length > PASTE_MAX) return fail($, request, 'The clipboard holds too much text. Copy just the value.')
+  held.set(request.id, value)
+  await update($, pending, now => (now?.id === request.id ? { ...now, pasted: Array.from(value).length, error: '' } : now))
+}
+
+async function unpaste($: EngineInterface, request: VaultRequest) {
+  held.delete(request.id)
+  await update($, pending, now => (now?.id === request.id ? { ...now, pasted: 0 } : now))
+}
+
 /**
  * A command that would send secrets to sites they were not saved for waits for
  * the person: the guard against a page or a file that talks Claude into
@@ -453,6 +487,7 @@ export const register: Register = on => {
       service: typeof input.service === 'string' ? input.service.trim() : '',
       isPlain: false,
       error: '',
+      pasted: 0,
     }
     const onAbort = () => {
       const reason = next.signal.reason instanceof Error ? next.signal.reason.message : String(next.signal.reason)
@@ -471,6 +506,7 @@ export const register: Register = on => {
       outcome = 'timeout'
     } finally {
       next.signal.removeEventListener('abort', onAbort)
+      held.delete(request.id)
       await update($, pending, now => (now?.id === request.id ? null : now))
       await update($, ring, () => null)
       $.ui.status(undefined)
@@ -502,6 +538,7 @@ export const register: Register = on => {
       service: 'modal.com',
       isPlain: false,
       error: '',
+      pasted: 0,
     }))
     return { result: 'The preview field is up. Cancel or Save closes it; nothing is saved.' }
   })
@@ -540,7 +577,12 @@ export const register: Register = on => {
     const data = e.data as { type?: unknown; value?: unknown } | null
     const request = await read($, pending)
     if (request === null || e.element !== request.id) return next(e)
-    if (data?.type === 'submit' && typeof data.value === 'string') await save($, request, data.value)
+    if (data?.type === 'submit' && typeof data.value === 'string') {
+      const pastedValue = (data as { usePasted?: unknown }).usePasted === true ? held.get(request.id) : undefined
+      await save($, request, pastedValue ?? data.value)
+    }
+    if (data?.type === 'paste') await pasteInto($, request)
+    if (data?.type === 'unpaste') await unpaste($, request)
     if (data?.type === 'cancel') await cancel($, request)
     if (data?.type === 'focus') await update($, ring, () => request.id)
     return next(e)
@@ -588,7 +630,7 @@ export const register: Register = on => {
     if (request === null) return next(e)
 
     const masked = isMasked(request.kind)
-    const placeholder = masked ? 'Paste or type it…' : request.kind === 'email' ? 'name@example.com' : 'Type it…'
+    const placeholder = masked ? 'Paste (⌘V) or type it…' : request.kind === 'email' ? 'name@example.com' : 'Type it…'
     const isFocused = (await read($, ring)) === request.id
     const { Box, Text } = $.ui.resolve(e)
     const header = (
@@ -616,7 +658,7 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column" borderStyle="round" borderColor="permission" paddingX={1}>
           {header}
-          <Client key={request.id} module="./field.tsx" props={{ masked, placeholder, isFocused, error: request.error }} />
+          <Client key={request.id} module="./field.tsx" props={{ masked, placeholder, isFocused, error: request.error, pasted: request.pasted }} />
           {request.error !== '' && <Text color="error">{request.error}</Text>}
           {note}
         </Box>

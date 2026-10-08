@@ -13,6 +13,8 @@ export type VaultRequest = {
   isPlain: boolean
   /** The last error to show under the field, if saving failed. */
   error: string
+  /** How many characters a paste brought from the clipboard; the value itself stays in the hooks module. */
+  pasted: number
 }
 
 /** What the vault file says of a secret besides its value. */
