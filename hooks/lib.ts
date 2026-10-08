@@ -151,7 +151,9 @@ export function touchesVault(command: string, vaultDir: string): boolean {
 // ---------------------------------------------------------------------------
 // Where a command sends its secrets
 
-const URL_HOST = /\b(?:https?|wss?):\/\/(?:[^\s/'"`<>@]*@)?([^\s/'"`<>?#:]+)/gi
+// A host is letters, digits, dots and hyphens: whatever follows (`;`, `)`, a
+// quote) ends it, so `$U;` in a shell line does not read as another site.
+const URL_HOST = /\b(?:https?|wss?):\/\/(?:[^\s/'"`<>@]*@)?([A-Za-z0-9.-]+)/gi
 
 /** The hosts of the URLs a command names, lower-cased, each once. */
 export function hostsIn(command: string): string[] {

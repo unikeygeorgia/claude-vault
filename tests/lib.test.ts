@@ -113,6 +113,7 @@ describe('sends', () => {
   test('reads the hosts a command sends to', () => {
     expect(hostsIn('curl -H "x: $K" https://api.modal.com/v1 && wget http://user:pw@Evil.test:8080/x')).toEqual(['api.modal.com', 'evil.test'])
     expect(hostsIn('modal token set --token-id "$K"')).toEqual([])
+    expect(hostsIn('U=https://app.modal.run; curl "$U" (see https://docs.modal.com).')).toEqual(['app.modal.run', 'docs.modal.com'])
   })
 
   test('knows a secret\'s own site and the sites under it', () => {
