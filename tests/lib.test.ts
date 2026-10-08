@@ -132,11 +132,18 @@ describe('sends', () => {
 
 describe('partial values', () => {
   test('covers any part of a long secret, with no piece left over', () => {
-    const value = 'abcdefghijklmnopqrstuvwxyz0123456789'
+    const value = 'sk-aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC2dF4'
     const redactor = makeRedactor([{ name: 'LONG_KEY', value }])
     expect(redactor.text(`head ${value.slice(0, 20)} tail`)).toBe('head [vault:LONG_KEY] tail')
     expect(redactor.text(`mid ${value.slice(7, 30)}!`)).toBe('mid [vault:LONG_KEY]!')
-    expect(redactor.text('abcdefghij')).toBe('abcdefghij')
+    expect(redactor.text(value.slice(0, 10))).toBe(value.slice(0, 10))
+  })
+
+  test('leaves the ordinary words of a value alone and covers its key parts', () => {
+    const value = 'modal token set --token-id ak-Ab12Cd34Ef56Gh78Ij90Kl --token-secret as-Zy98Xw76Vu54Ts32Rq10Po'
+    const redactor = makeRedactor([{ name: 'CMD', value }])
+    expect(redactor.text('Run modal token set --token-id to log in')).toBe('Run modal token set --token-id to log in')
+    expect(redactor.text('secret is as-Zy98Xw76Vu54Ts32Rq10Po.')).toBe('secret is [vault:CMD].')
   })
 
   test('covers the hex spelling', () => {

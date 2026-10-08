@@ -208,9 +208,20 @@ export function spellings(value: string): string[] {
   return [...out].filter(spelling => spelling.length >= MIN_REDACT)
 }
 
-/** Every run of WINDOW characters of a long value: a part of it found in any output is covered too. */
+/**
+ * Whether a run looks like part of a key rather than ordinary text: it has a
+ * digit, mixed case, or a symbol. A value that holds words (a whole
+ * `modal token set --token-id …` line) would otherwise cover those words
+ * wherever they appear.
+ */
+const isDistinctive = (piece: string): boolean =>
+  !/^\s|\s$/.test(piece) && (/\d/.test(piece) || (/[A-Z]/.test(piece) && /[a-z]/.test(piece)) || /[^A-Za-z0-9\s._-]/.test(piece))
+
+/** Every distinctive run of WINDOW characters of a long value: a part of it found in any output is covered too. */
 export const windowsOf = (value: string): string[] =>
-  value.length < WINDOWED_FROM ? [] : Array.from({ length: value.length - WINDOW + 1 }, (_, i) => value.slice(i, i + WINDOW))
+  value.length < WINDOWED_FROM
+    ? []
+    : Array.from({ length: value.length - WINDOW + 1 }, (_, i) => value.slice(i, i + WINDOW)).filter(isDistinctive)
 
 export type Redactor = {
   readonly isEmpty: boolean
