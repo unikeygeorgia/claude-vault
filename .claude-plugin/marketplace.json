@@ -1,0 +1,5 @@
+{
+  "name": "claude-vault",
+  "owner": { "name": "Unikey Georgia" },
+  "plugins": [{ "name": "vault", "source": "./" }]
+}

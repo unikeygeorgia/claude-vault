@@ -1,0 +1,7 @@
+{
+  "name": "vault",
+  "version": "0.2.0",
+  "description": "A secure field for passwords, API keys and logins: encrypted into one vault file, used by Claude as $NAME, never seen by Claude",
+  "author": { "name": "Unikey Georgia" },
+  "types": "./types/index.d.ts"
+}
