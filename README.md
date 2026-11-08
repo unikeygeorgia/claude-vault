@@ -29,6 +29,7 @@ file, and lets Claude use them in its shell without ever seeing them.
 | A secret ends up in the transcript | Redaction runs before rows are stored |
 | Claude's tools open the vault | Bash, Read, Grep, Glob, Edit and Write are refused inside the vault folder, symlinks resolved; the carrier variable and the OS key are off limits |
 | A page or file talks Claude into sending a key away | A command that sends a secret to a site other than the one it was saved for waits for you: Allow once, Allow for this session, or Deny |
+| A secret that is an ordinary word hides that word in every text (a greeting saved as a test key turned every greeting into `[vault:NAME]`) | The masked field refuses a value of one or two plain words; a login that is one (a user name) is kept but not hidden; `/vault` and Claude's guide flag one saved before this rule |
 | The vault file leaks (backup, sync) | It is encrypted, its key is held by the OS, and an altered or renamed entry does not open |
 | Other plugins see what you type | The masked field is a surface module: keys stay on the drawing side and reach this plugin alone |
 

@@ -225,6 +225,27 @@ export const windowsOf = (value: string): string[] =>
     ? []
     : Array.from({ length: value.length - WINDOW + 1 }, (_, i) => value.slice(i, i + WINDOW)).filter(isDistinctive)
 
+const WORD = /^[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*$/u
+
+/**
+ * Whether a value reads as ordinary text: one or two words of letters in any
+ * script (a hyphen or an apostrophe inside a word is fine), with no digit and
+ * no other symbol, and no capital after a word's first letter unless the whole
+ * word is in capitals. Hiding such a value hides that word wherever it
+ * appears: a greeting saved as a test key turned every greeting Claude read
+ * into [vault:NAME], and Claude typed the marker back into what it wrote.
+ * Values too short to be redacted (MIN_REDACT) do not count.
+ */
+export function readsAsText(value: string): boolean {
+  const text = value.trim()
+  if (text.length < MIN_REDACT) return false
+  const words = text.split(/\s+/)
+  return (
+    words.length <= 2 &&
+    words.every(word => WORD.test(word) && (word === word.toUpperCase() || !/\p{Lu}/u.test(word.slice(1))))
+  )
+}
+
 export type Redactor = {
   readonly isEmpty: boolean
   /** The text with every secret replaced by `[vault:NAME]`. */
@@ -296,7 +317,21 @@ export function makeRedactor(secrets: readonly Secret[]): Redactor {
 // ---------------------------------------------------------------------------
 // What the model reads
 
-export function guide(entries: readonly VaultEntry[], problem: string): string {
+/**
+ * What the model is told about stored keys whose values read as ordinary words
+ * (saved before the field refused them): their markers hide a word, not a key.
+ */
+export function wordNote(names: readonly string[]): string {
+  const one = names.length === 1
+  return [
+    `${names.join(', ')} ${one ? 'reads' : 'read'} as an ordinary word, so the vault hides that word in everything you read:`,
+    `inside ordinary text, ${names.map(name => `[vault:${name}]`).join(', ')} ${one ? 'stands' : 'stand'} for that word, not for a key.`,
+    'Never copy such a marker into a file, data or a message: write around it, or ask the person for the word.',
+    `Suggest they remove it with ${names.map(name => `/vault remove ${name}`).join(', ')} and save the real value.`,
+  ].join(' ')
+}
+
+export function guide(entries: readonly VaultEntry[], problem: string, words: readonly string[] = []): string {
   const saved = entries.length === 0
     ? 'Nothing is saved yet.'
     : `Saved: ${entries.map(entry => `${entry.name} (${entry.label}${entry.service ? `, ${entry.service}` : ''})`).join('; ')}.`
@@ -309,6 +344,7 @@ export function guide(entries: readonly VaultEntry[], problem: string): string {
     'The vault folder and its key are off limits to your tools. If the person pastes a secret into the chat anyway, do not repeat it; offer to save it with request_secret.',
     'Give every secret its service (the site it belongs to, e.g. modal.com): a command that sends a secret to any other site waits for the person to allow it.',
     saved,
+    ...(words.length > 0 ? [wordNote(words)] : []),
     ...(problem ? [`The vault cannot be opened right now: ${problem}`] : []),
   ].join('\n')
 }

@@ -5,8 +5,8 @@ import type { KeyStore, VaultAsk, VaultEntry, VaultFile, VaultRequest } from '..
 import { fromHex, randomBytes, toHex } from './crypto'
 import {
   FORMAT, KINDS, MASTER_ACCOUNT, NAME_PATTERN, README, SERVICE, decodeStored, describe, exportScript, guide, isInVault, isKind,
-  isMasked, keychainAddLine, makeRedactor, nameProblem, normalizePath, openEntry, parseVault, referencedNames, sealEntry,
-  shellCommand, strangeSends, touchesVault,
+  isMasked, keychainAddLine, makeRedactor, nameProblem, normalizePath, openEntry, parseVault, readsAsText, referencedNames,
+  sealEntry, shellCommand, strangeSends, touchesVault,
 } from './lib'
 import type { Redactor, Secret } from './lib'
 
@@ -34,6 +34,10 @@ let keyStore: KeyStore | undefined
 let entries: VaultEntry[] = []
 let secrets: Secret[] = []
 let redactor: Redactor = makeRedactor([])
+/** Keys and passwords whose value reads as an ordinary word (saved before the field refused them): still hidden, and flagged. */
+let wordKeys: string[] = []
+/** Logins whose value reads as an ordinary word (a user name): kept, but not hidden, as hiding them would hide that word. */
+let plainLogins: string[] = []
 let loadedAt = -1
 let problem = ''
 /** The secrets each running Bash call asked for, by tool_use_id. */
@@ -49,7 +53,11 @@ const vaultFile = () => `${vaultDir}/vault.json`
 function hold(nextEntries: VaultEntry[], nextSecrets: Secret[]) {
   entries = nextEntries
   secrets = nextSecrets
-  redactor = makeRedactor(nextSecrets)
+  const masked = new Set(nextEntries.filter(entry => isMasked(entry.kind)).map(entry => entry.name))
+  const words = nextSecrets.filter(secret => readsAsText(secret.value)).map(secret => secret.name)
+  wordKeys = words.filter(name => masked.has(name))
+  plainLogins = words.filter(name => !masked.has(name))
+  redactor = makeRedactor(nextSecrets.filter(secret => !plainLogins.includes(secret.name)))
 }
 
 async function run($: EngineInterface, argv: readonly string[], init?: ProcessRunInit): Promise<ProcessRunResult | undefined> {
@@ -252,6 +260,13 @@ async function fail($: EngineInterface, request: VaultRequest, error: string) {
 
 async function save($: EngineInterface, request: VaultRequest, value: string) {
   if (value.length === 0) return fail($, request, 'The field is empty.')
+  if (isMasked(request.kind) && readsAsText(value)) {
+    return fail(
+      $,
+      request,
+      'That reads as an ordinary word: the vault would hide that word in every text Claude reads. Enter the real key, or a password with a digit or a symbol.',
+    )
+  }
   if (request.id.startsWith('preview-')) {
     await update($, pending, () => null)
     $.ui.toast('Preview only: nothing was saved.')
@@ -402,7 +417,7 @@ export const register: Register = on => {
 
   on('prompt.compose', async ($, e, next) => {
     const composed = await next(e)
-    return { sections: [...composed.sections, { id: 'vault:guide', scope: 'session', text: guide(entries, problem) }] }
+    return { sections: [...composed.sections, { id: 'vault:guide', scope: 'session', text: guide(entries, problem, wordKeys) }] }
   })
 
   // Every tool: keep the model's tools out of the vault, carry the secrets a
@@ -516,7 +531,9 @@ export const register: Register = on => {
       return {
         result:
           `Saved "${request.label}" in the vault as ${name}. Use it in Bash as "$${name}"; it is put into the shell at run time ` +
-          'and redacted from every output. You will never see the value.',
+          (plainLogins.includes(name)
+            ? 'but not hidden from outputs: it reads as an ordinary word, and hiding it would hide that word in every text.'
+            : 'and redacted from every output. You will never see the value.'),
       }
     }
     if (outcome === 'cancelled') {
@@ -562,13 +579,17 @@ export const register: Register = on => {
     }
     const where = `${vaultFile()}${keyStore ? `, key in the ${keyStore}` : ''}`
     if (entries.length === 0) return { text: `The vault is empty (${where}). Claude asks for a secret with a secure field when it needs one.` }
+    const flag = (name: string) =>
+      wordKeys.includes(name) ? '  ⚠ an ordinary word: hidden wherever it appears' : plainLogins.includes(name) ? '  · an ordinary word: not hidden' : ''
     return {
       text: [
         `Vault: ${where}`,
         ...(problem ? [`Problem: ${problem}`] : []),
-        ...entries.map(entry => `  ${entry.name}  ${entry.label}${entry.service ? `  ·  ${entry.service}` : ''}`),
+        ...entries.map(entry => `  ${entry.name}  ${entry.label}${entry.service ? `  ·  ${entry.service}` : ''}${flag(entry.name)}`),
         '',
-        'Remove one: /vault remove NAME',
+        ...(wordKeys.length > 0
+          ? [`A key that is an ordinary word hides that word in every text Claude reads. Remove it: ${wordKeys.map(name => `/vault remove ${name}`).join(', ')}`]
+          : ['Remove one: /vault remove NAME']),
       ].join('\n'),
     }
   })

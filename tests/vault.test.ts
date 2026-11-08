@@ -1,6 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On, ProcessRunResult } from 'claude-code'
 
+import { toHex } from '../hooks/crypto'
+import { sealEntry } from '../hooks/lib'
+
 const SECRET = "sk-test-9f8e'7d6c5b"
 const HOME = '/Users/tester'
 const VAULT = `${HOME}/.claude/vault`
@@ -228,6 +231,59 @@ test('a paste reads the clipboard in the vault, draws only dots, and saves what 
 
   await $.tool.call({ tool: 'Bash', command: 'modal deploy --token "$P_TOKEN"', description: 'Use it' })
   expect(carried).toBe("export P_TOKEN='ak-pastedTokenValue123'")
+})
+
+test('the masked field refuses an ordinary word, then takes the real key', async ($, on) => {
+  mock.store(on)
+  mock.clock(on)
+  const machine = fakeMachine(on)
+  const asked = $.tool.call({ tool: 'mcp__vault__request_secret', tool_use_id: 'toolu_w', name: 'W_KEY', label: 'W', kind: 'api_key' } as never)
+  await machine.started
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.post({ type: 'submit', value: 'მადლობა' }, { in: 'toolu_w' })
+  expect(await ui.find({ type: 'Text', text: /ordinary word/ })).toBeDefined()
+  expect(machine.files.has(`${VAULT}/vault.json`)).toBe(false)
+  await ui.post({ type: 'submit', value: 'sk-real-4f2a9c' }, { in: 'toolu_w' })
+  expect(JSON.stringify(await asked)).toContain('Saved')
+  expect(machine.files.get(`${VAULT}/vault.json`)).toContain('W_KEY')
+})
+
+test('a login that reads as a word is kept but not hidden from outputs', async ($, on) => {
+  mock.store(on)
+  mock.clock(on)
+  const machine = fakeMachine(on)
+  on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: 'signed in as noetikadze', stderr: '', interrupted: false } }))
+  const asked = $.tool.call({ tool: 'mcp__vault__request_secret', tool_use_id: 'toolu_u', name: 'SITE_USER', label: 'User', kind: 'username' } as never)
+  await machine.started
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.post({ type: 'submit', value: 'noetikadze' }, { in: 'toolu_u' })
+  expect(JSON.stringify(await asked)).toContain('not hidden')
+  const out = await $.tool.call({ tool: 'Bash', command: 'whoami', description: 'Who is signed in' })
+  expect(JSON.stringify(out)).toContain('signed in as noetikadze')
+})
+
+test('a stored key that reads as a word stays hidden and is flagged in /vault', async ($, on) => {
+  mock.store(on)
+  mock.clock(on)
+  const machine = fakeMachine(on)
+  const key = new Uint8Array(32).fill(5)
+  machine.keychain.set('master-key', toHex(key))
+  const entry = { name: 'OLD_KEY', label: 'Old test key', kind: 'api_key' as const, service: 'test', savedAt: '2026-10-08T00:00:00.000Z' }
+  machine.files.set(`${VAULT}/vault.json`, JSON.stringify({ format: 'claude-vault/1', keyStore: 'macos-keychain', entries: [sealEntry(key, entry, 'მადლობა')] }))
+  on('tool.call', { tool: 'Bash' }, () => ({ result: { stdout: 'მადლობა, მეგობარო', stderr: '', interrupted: false } }))
+
+  const listed = await $.command.run({
+    command: 'vault',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: false, columns: 80 },
+  })
+  expect(listed.text).toContain('OLD_KEY')
+  expect(listed.text).toContain('an ordinary word: hidden wherever it appears')
+  expect(listed.text).toContain('/vault remove OLD_KEY')
+
+  const out = await $.tool.call({ tool: 'Bash', command: 'cat greeting.txt', description: 'Read it' })
+  expect(JSON.stringify(out)).toContain('[vault:OLD_KEY], მეგობარო')
 })
 
 test('a clipboard of several lines is refused with a clear message', async ($, on) => {
